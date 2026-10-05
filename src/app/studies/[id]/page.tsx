@@ -2,26 +2,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { LuBadgeCheck, LuCalendar, LuCrown, LuKey, LuLock, LuUsers } from "react-icons/lu";
-import { createClient } from "@/lib/supabase/client";
+import { LuBadgeCheck, LuCalendar, LuCircleAlert, LuCrown, LuKey, LuLock, LuUsers } from "react-icons/lu";
+import { getProfiles, getStudy, joinStudy, leaveStudy } from "@/lib/firebase/db";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
+import { errorMessage } from "@/lib/errors";
 import type { Study } from "@/lib/types";
 import Loading from "@/components/Loading";
 import PageHeader, { BackLink } from "@/components/PageHeader";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-
-interface LeaderboardRow {
-  id: string;
-  display_name: string;
-  verses_typed: number;
-  chapters_completed: number;
-  is_minister: boolean;
-}
 
 interface MemberRow {
   user_id: string;
@@ -35,7 +29,6 @@ interface MemberRow {
 export default function StudyDetailPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const supabase = createClient();
   const router = useRouter();
   const params = useParams();
   const studyId = String(params.id);
@@ -43,39 +36,36 @@ export default function StudyDetailPage() {
   const [study, setStudy] = useState<Study | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: s }, { data: mem }] = await Promise.all([
-      supabase.from("studies").select("*").eq("id", studyId).maybeSingle(),
-      supabase.from("study_members").select("user_id, role").eq("study_id", studyId),
-    ]);
-    setStudy((s as Study) ?? null);
-    const memRows = (mem as { user_id: string; role: string }[]) ?? [];
-    const ids = memRows.map((m) => m.user_id);
+    try {
+      const s = await getStudy(studyId);
+      setStudy(s);
+      const ids = s?.member_ids ?? [];
+      // Each member's name and totals come from their public profile.
+      const profiles = await getProfiles(ids);
 
-    const { data: stats } = await supabase
-      .from("leaderboard")
-      .select("id, display_name, verses_typed, chapters_completed, is_minister")
-      .in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
-    const statMap = new Map(((stats as LeaderboardRow[]) ?? []).map((r) => [r.id, r]));
-
-    const rows: MemberRow[] = memRows
-      .map((m) => {
-        const st = statMap.get(m.user_id);
-        return {
-          user_id: m.user_id,
-          role: m.role,
-          display_name: st?.display_name ?? "-",
-          verses_typed: st?.verses_typed ?? 0,
-          chapters_completed: st?.chapters_completed ?? 0,
-          is_minister: st?.is_minister ?? false,
-        };
-      })
-      .sort((a, b) => b.verses_typed - a.verses_typed);
-    setMembers(rows);
+      const rows: MemberRow[] = ids
+        .map((id) => {
+          const p = profiles.get(id);
+          return {
+            user_id: id,
+            role: id === s?.host_id ? "host" : "member",
+            display_name: p?.display_name ?? "-",
+            verses_typed: p?.verses_typed ?? 0,
+            chapters_completed: p?.chapters_completed ?? 0,
+            is_minister: p?.is_minister ?? false,
+          };
+        })
+        .sort((a, b) => b.verses_typed - a.verses_typed);
+      setMembers(rows);
+    } catch (e) {
+      console.error(e);
+    }
     setLoading(false);
-  }, [supabase, studyId]);
+  }, [studyId]);
 
   useEffect(() => {
     load();
@@ -83,13 +73,25 @@ export default function StudyDetailPage() {
 
   const leave = async () => {
     if (!user) return;
-    await supabase.from("study_members").delete().eq("study_id", studyId).eq("user_id", user.id);
+    setError(null);
+    try {
+      await leaveStudy(studyId, user.id);
+    } catch (e) {
+      setError(errorMessage(e, t));
+      return;
+    }
     router.push("/studies");
   };
 
   const join = async () => {
     if (!user) return;
-    await supabase.from("study_members").insert({ study_id: studyId, user_id: user.id, role: "member" });
+    setError(null);
+    try {
+      await joinStudy(studyId, user.id);
+    } catch (e) {
+      setError(errorMessage(e, t));
+      return;
+    }
     load();
   };
 
@@ -116,6 +118,13 @@ export default function StudyDetailPage() {
           ) : null
         }
       />
+
+      {error && (
+        <Alert variant="destructive">
+          <LuCircleAlert />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted-foreground">
         {study.schedule && (

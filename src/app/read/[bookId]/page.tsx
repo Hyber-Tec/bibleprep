@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { listProgress } from "@/lib/firebase/db";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,6 @@ import PageHeader, { BackLink } from "@/components/PageHeader";
 export default function ChapterPickerPage() {
   const { t, locale } = useI18n();
   const { user } = useAuth();
-  const supabase = createClient();
   const params = useParams();
 
   const bookId = Number(params.bookId);
@@ -26,18 +25,15 @@ export default function ChapterPickerPage() {
   useEffect(() => {
     if (!user || !book) return;
     let alive = true;
-    supabase
-      .from("reading_progress")
-      .select("book_id, chapter, completed, verses_typed")
-      .eq("user_id", user.id)
-      .eq("book_id", bookId)
-      .then(({ data }) => {
-        if (alive) setRows((data as ProgressRow[]) ?? []);
-      });
+    listProgress(user.id, bookId)
+      .then((data) => {
+        if (alive) setRows(data);
+      })
+      .catch((error) => console.error(error));
     return () => {
       alive = false;
     };
-  }, [user, book, bookId, supabase]);
+  }, [user, book, bookId]);
 
   if (!book) return <p className="text-muted-foreground">Unknown book.</p>;
 

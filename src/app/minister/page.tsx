@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { LuBadgeCheck, LuCircleAlert, LuCircleX, LuHourglass } from "react-icons/lu";
-import { createClient } from "@/lib/supabase/client";
+import { getLatestApplication, submitApplication } from "@/lib/firebase/db";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { errorMessage } from "@/lib/errors";
@@ -20,7 +20,6 @@ import { Textarea } from "@/components/ui/textarea";
 export default function MinisterPage() {
   const { t } = useI18n();
   const { user, profile, refreshProfile } = useAuth();
-  const supabase = createClient();
 
   const [app, setApp] = useState<MinisterApplication | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,42 +34,33 @@ export default function MinisterPage() {
 
   useEffect(() => {
     if (!user) return;
-    supabase
-      .from("minister_applications")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => {
-        setApp((data as MinisterApplication) ?? null);
-        setLoading(false);
-      });
-  }, [user, supabase]);
+    getLatestApplication(user.id)
+      .then(setApp)
+      .catch((e) => console.error(e))
+      .finally(() => setLoading(false));
+  }, [user]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
     setBusy(true);
     setError(null);
-    const { data, error, status } = await supabase
-      .from("minister_applications")
-      .insert({
-        user_id: user.id,
+    let submitted: MinisterApplication;
+    try {
+      submitted = await submitApplication(user.id, {
         church_name: church,
         denomination,
         role_title: roleTitle,
         credential_url: credential,
         note,
-      })
-      .select()
-      .single();
-    setBusy(false);
-    if (error) {
-      setError(errorMessage(error, t, status));
+      });
+    } catch (e) {
+      setBusy(false);
+      setError(errorMessage(e, t));
       return;
     }
-    setApp(data as MinisterApplication);
+    setBusy(false);
+    setApp(submitted);
     await refreshProfile();
   };
 

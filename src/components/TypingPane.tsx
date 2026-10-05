@@ -12,7 +12,7 @@ import {
   LuKeyboard,
   LuPartyPopper,
 } from "react-icons/lu";
-import { createClient } from "@/lib/supabase/client";
+import { getTypedVerses, recordTypedVerses } from "@/lib/firebase/db";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { errorMessage } from "@/lib/errors";
@@ -25,7 +25,6 @@ import {
   ACCURACY_THRESHOLD,
   type Verse,
 } from "@/lib/bible/text";
-import type { ReadingProgressRow } from "@/lib/types";
 import Loading from "./Loading";
 import PageHeader, { BackLink } from "./PageHeader";
 import VersionSelect from "./VersionSelect";
@@ -63,7 +62,6 @@ export default function TypingPane({
   const { t, locale } = useI18n();
   const { user } = useAuth();
   const userId = user?.id;
-  const supabase = createClient();
   const book = getBook(bookId);
 
   const [verses, setVerses] = useState<Verse[] | null>(null);
@@ -80,6 +78,9 @@ export default function TypingPane({
   // failed save is repaired by the next one. Kept per chapter, across translations.
   const pending = useRef(new Set<number>());
   const pendingChapter = useRef("");
+  // Saves run one at a time. Each is a transaction on the chapter's document, so two in
+  // flight at once would only make each other retry.
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [menuIndex, setMenuIndex] = useState(0); // verse right-clicked in the list
@@ -100,19 +101,16 @@ export default function TypingPane({
     setSaveStatus({ saved: false, error: null });
     (async () => {
       // Text and progress load in parallel.
-      const [ch, progress] = await Promise.all([
+      const [ch, saved] = await Promise.all([
         loadChapter(translation, bookId, chapter),
         userId
-          ? supabase
-              .from("reading_progress")
-              .select("typed_verses")
-              .eq("user_id", userId)
-              .eq("book_id", bookId)
-              .eq("chapter", chapter)
-              .maybeSingle()
-          : null,
+          ? getTypedVerses(userId, bookId, chapter).catch((e): number[] => {
+              console.error(e);
+              return [];
+            })
+          : [],
       ]);
-      const done = new Set([...(progress?.data?.typed_verses ?? []), ...pending.current]);
+      const done = new Set([...saved, ...pending.current]);
       if (!alive) return;
       setVerses(ch?.verses ?? null);
       setTypedVerses(done);
@@ -122,7 +120,7 @@ export default function TypingPane({
     return () => {
       alive = false;
     };
-  }, [translation, bookId, chapter, userId, supabase]);
+  }, [translation, bookId, chapter, userId]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -138,27 +136,35 @@ export default function TypingPane({
   }, [index, loading, verses]);
 
   const record = useCallback(
-    async (verse: number) => {
+    (verse: number) => {
       if (!userId || !verses) return;
       const chapterKey = pendingChapter.current;
       pending.current.add(verse);
-      const { data, error, status } = await supabase.rpc("record_typed_verses", {
-        p_book_id: bookId,
-        p_chapter: chapter,
-        p_verses: [...pending.current],
-        p_chapter_verses: verses.map((v) => v.verse),
-      });
-      if (pendingChapter.current !== chapterKey) return; // moved on to another chapter
-      if (error) {
-        setSaveStatus({ saved: false, error: errorMessage(error, t, status) });
-        return;
-      }
-      const saved = (data as ReadingProgressRow).typed_verses;
-      for (const v of saved) pending.current.delete(v);
-      setTypedVerses((prev) => new Set([...prev, ...saved]));
-      setSaveStatus({ saved: true, error: null });
+      const save = async () => {
+        if (pendingChapter.current !== chapterKey) return; // moved on to another chapter
+        let saved: number[];
+        try {
+          saved = await recordTypedVerses(
+            userId,
+            bookId,
+            chapter,
+            [...pending.current],
+            verses.map((v) => v.verse)
+          );
+        } catch (error) {
+          if (pendingChapter.current === chapterKey) {
+            setSaveStatus({ saved: false, error: errorMessage(error, t) });
+          }
+          return;
+        }
+        if (pendingChapter.current !== chapterKey) return; // moved on to another chapter
+        for (const v of saved) pending.current.delete(v);
+        setTypedVerses((prev) => new Set([...prev, ...saved]));
+        setSaveStatus({ saved: true, error: null });
+      };
+      saveQueue.current = saveQueue.current.then(save, save);
     },
-    [userId, verses, supabase, bookId, chapter, t]
+    [userId, verses, bookId, chapter, t]
   );
 
   const target = verses?.[index]?.text ?? "";
@@ -174,7 +180,7 @@ export default function TypingPane({
     setTyped("");
     const upcoming = nextUntyped(verses, nextTyped, index);
     if (upcoming !== -1) setIndex(upcoming);
-    void record(verse);
+    record(verse);
   }, [verses, canAdvance, index, typedVerses, record]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

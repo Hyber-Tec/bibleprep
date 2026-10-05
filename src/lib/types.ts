@@ -1,33 +1,29 @@
+// Shapes of the Firestore documents (see firestore.rules and README.md). Timestamps are
+// converted to ISO strings when a document is read.
+
 export interface Profile {
   id: string;
   display_name: string;
   locale: "en" | "ko";
   role: "member" | "minister" | "admin";
   is_minister: boolean;
-  created_at: string;
-}
-
-/** Verses typed in one chapter, shared by every translation (matched by verse number). */
-export interface ReadingProgressRow {
-  id: string;
-  user_id: string;
-  book_id: number;
-  chapter: number;
-  typed_verses: number[];
+  /** Leaderboard totals, kept in step with reading_progress by the client. */
   verses_typed: number;
-  completed: boolean;
-  updated_at: string;
+  chapters_completed: number;
+  created_at: string;
 }
 
 export interface Study {
   id: string;
   host_id: string;
   title: string;
-  description: string | null;
+  description: string;
   translation: string;
-  schedule: string | null;
+  schedule: string;
   is_public: boolean;
   join_code: string;
+  /** Every member, including the host. */
+  member_ids: string[];
   created_at: string;
 }
 
@@ -35,10 +31,10 @@ export interface MinisterApplication {
   id: string;
   user_id: string;
   church_name: string;
-  denomination: string | null;
-  role_title: string | null;
-  credential_url: string | null;
-  note: string | null;
+  denomination: string;
+  role_title: string;
+  credential_url: string;
+  note: string;
   status: "pending" | "approved" | "rejected";
   created_at: string;
 }

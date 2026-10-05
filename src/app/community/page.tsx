@@ -11,7 +11,7 @@ import {
   LuMessagesSquare,
   LuSquarePen,
 } from "react-icons/lu";
-import { createClient } from "@/lib/supabase/client";
+import { createPost, getProfiles, listPosts } from "@/lib/firebase/db";
 import { useAuth } from "@/lib/auth";
 import { useI18n, type DictKey } from "@/lib/i18n";
 import { errorMessage } from "@/lib/errors";
@@ -40,7 +40,6 @@ const CATEGORIES: { id: CommunityPost["category"]; key: DictKey; icon: IconType 
 export default function CommunityPage() {
   const { t, locale } = useI18n();
   const { user, profile } = useAuth();
-  const supabase = createClient();
 
   const [posts, setPosts] = useState<(CommunityPost & { author: string })[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,16 +47,16 @@ export default function CommunityPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    // One request: each post with its author's name embedded.
-    const { data } = await supabase
-      .from("community_posts")
-      .select("*, author:profiles(display_name)")
-      .order("created_at", { ascending: false })
-      .limit(50);
-    const rows = (data as (CommunityPost & { author: { display_name: string } | null })[]) ?? [];
-    setPosts(rows.map((p) => ({ ...p, author: p.author?.display_name ?? "-" })));
+    try {
+      const rows = await listPosts();
+      // Authors are looked up by id, so a renamed author shows under the new name.
+      const authors = await getProfiles(rows.map((p) => p.author_id));
+      setPosts(rows.map((p) => ({ ...p, author: authors.get(p.author_id)?.display_name ?? "-" })));
+    } catch (error) {
+      console.error(error);
+    }
     setLoading(false);
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -156,7 +155,6 @@ function PostForm({
 }) {
   const { t } = useI18n();
   const { user } = useAuth();
-  const supabase = createClient();
   const [category, setCategory] = useState<CommunityPost["category"]>("general");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -168,14 +166,14 @@ function PostForm({
     if (!user) return;
     setBusy(true);
     setError(null);
-    const { error, status } = await supabase
-      .from("community_posts")
-      .insert({ author_id: user.id, category, title, body });
-    setBusy(false);
-    if (error) {
-      setError(errorMessage(error, t, status));
+    try {
+      await createPost(user.id, { category, title, body });
+    } catch (e) {
+      setBusy(false);
+      setError(errorMessage(e, t));
       return;
     }
+    setBusy(false);
     onCreated();
   };
 
