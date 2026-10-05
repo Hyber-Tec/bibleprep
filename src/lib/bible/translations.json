@@ -1,0 +1,8 @@
+[
+  { "id": "web", "label": "World English Bible (WEB)", "locale": "en", "source": "web" },
+  { "id": "kjv", "label": "King James Version (KJV)", "locale": "en", "source": "kjv" },
+  { "id": "asv", "label": "American Standard Version (ASV)", "locale": "en", "source": "asv" },
+  { "id": "ylt", "label": "Young's Literal Translation (YLT)", "locale": "en", "source": "ylt" },
+  { "id": "bbe", "label": "Bible in Basic English (BBE)", "locale": "en", "source": "basicenglish" },
+  { "id": "krv", "label": "개역한글", "locale": "ko", "source": "korean" }
+]
