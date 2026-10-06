@@ -2,42 +2,29 @@
 
 import { useEffect, useState } from "react";
 import { LuBadgeCheck } from "react-icons/lu";
-import { createClient } from "@/lib/supabase/client";
+import { listLeaderboard } from "@/lib/firebase/db";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import type { Profile } from "@/lib/types";
 import Loading from "@/components/Loading";
 import PageHeader from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-interface Row {
-  id: string;
-  display_name: string;
-  verses_typed: number;
-  chapters_completed: number;
-  is_minister: boolean;
-}
-
 export default function LeaderboardPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const supabase = createClient();
-  const [rows, setRows] = useState<Row[]>([]);
+  const [rows, setRows] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase
-      .from("leaderboard")
-      .select("*")
-      .order("verses_typed", { ascending: false })
-      .limit(100)
-      .then(({ data }) => {
-        setRows((data as Row[]) ?? []);
-        setLoading(false);
-      });
-  }, [supabase]);
+    listLeaderboard()
+      .then(setRows)
+      .catch((error) => console.error(error))
+      .finally(() => setLoading(false));
+  }, []);
 
   return (
     <div className="space-y-6">

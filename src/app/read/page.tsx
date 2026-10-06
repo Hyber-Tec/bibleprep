@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { LuCircleCheck } from "react-icons/lu";
-import { createClient } from "@/lib/supabase/client";
+import { listProgress } from "@/lib/firebase/db";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { BOOKS, bookName } from "@/lib/bible/books";
@@ -16,7 +16,6 @@ import { Progress } from "@/components/ui/progress";
 export default function ReadGridPage() {
   const { t, locale } = useI18n();
   const { user } = useAuth();
-  const supabase = createClient();
 
   const [rows, setRows] = useState<ProgressRow[]>([]);
 
@@ -24,17 +23,15 @@ export default function ReadGridPage() {
   useEffect(() => {
     if (!user) return;
     let alive = true;
-    supabase
-      .from("reading_progress")
-      .select("book_id, chapter, completed, verses_typed")
-      .eq("user_id", user.id)
-      .then(({ data }) => {
-        if (alive) setRows((data as ProgressRow[]) ?? []);
-      });
+    listProgress(user.id)
+      .then((data) => {
+        if (alive) setRows(data);
+      })
+      .catch((error) => console.error(error));
     return () => {
       alive = false;
     };
-  }, [user, supabase]);
+  }, [user]);
 
   const agg = useMemo(() => aggregate(rows), [rows]);
   const byBook = useMemo(() => {

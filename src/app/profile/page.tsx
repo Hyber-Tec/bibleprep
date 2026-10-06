@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { LuArrowRight, LuBadgeCheck, LuCheck } from "react-icons/lu";
-import { createClient } from "@/lib/supabase/client";
+import { LuArrowRight, LuBadgeCheck, LuCheck, LuCircleAlert } from "react-icons/lu";
+import { listProgress, setDisplayName as saveDisplayName } from "@/lib/firebase/db";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
+import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { aggregate, type ProgressRow } from "@/lib/progress";
+import { aggregate } from "@/lib/progress";
 import Loading from "@/components/Loading";
 import PageHeader from "@/components/PageHeader";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,10 +21,10 @@ import { Input } from "@/components/ui/input";
 export default function ProfilePage() {
   const { t } = useI18n();
   const { user, profile, refreshProfile } = useAuth();
-  const supabase = createClient();
 
   const [displayName, setDisplayName] = useState("");
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState({ verses: 0, chapters: 0 });
 
   useEffect(() => {
@@ -32,24 +34,28 @@ export default function ProfilePage() {
   useEffect(() => {
     if (!user) return;
     let alive = true;
-    supabase
-      .from("reading_progress")
-      .select("book_id, chapter, completed, verses_typed")
-      .eq("user_id", user.id)
-      .then(({ data }) => {
+    listProgress(user.id)
+      .then((rows) => {
         if (!alive) return;
-        const agg = aggregate((data as ProgressRow[]) ?? []);
+        const agg = aggregate(rows);
         setStats({ verses: agg.versesTyped, chapters: agg.chaptersDone });
-      });
+      })
+      .catch((e) => console.error(e));
     return () => {
       alive = false;
     };
-  }, [user, supabase]);
+  }, [user]);
 
   const saveName = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    await supabase.from("profiles").update({ display_name: displayName }).eq("id", user.id);
+    setError(null);
+    try {
+      await saveDisplayName(user.id, displayName);
+    } catch (err) {
+      setError(errorMessage(err, t));
+      return;
+    }
     await refreshProfile();
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
@@ -85,6 +91,12 @@ export default function ProfilePage() {
                 </Button>
               </div>
             </Field>
+            {error && (
+              <Alert variant="destructive" className="mt-4">
+                <LuCircleAlert />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
           </form>
         </CardContent>
       </Card>

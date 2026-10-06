@@ -5,52 +5,65 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import type { User } from "@supabase/supabase-js";
-import { createClient } from "@/lib/supabase/client";
 import type { Profile } from "@/lib/types";
+import { getProfile } from "@/lib/firebase/db";
+import {
+  ensureCurrentProfile,
+  onUserChanged,
+  signInWithEmail,
+  signInWithGoogle as googleSignIn,
+  signOutUser,
+  signUpWithEmail,
+  type AppUser,
+} from "@/lib/firebase/auth";
 
 interface AuthValue {
-  user: User | null;
+  user: AppUser | null;
   profile: Profile | null;
   loading: boolean;
   refreshProfile: () => Promise<void>;
+  signUp: (displayName: string, email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const supabase = createClient();
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const userId = user?.id;
 
-  // The session comes from the stored cookie, so INITIAL_SESSION needs no network round
-  // trip; the middleware has already verified it with the auth server for this page.
-  useEffect(() => {
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      const next = session?.user ?? null;
-      // Token refreshes emit a new object for the same user; keeping the old one stops
-      // every page from refetching its data.
-      setUser((prev) => (prev?.id === next?.id ? prev : next));
-      setLoading(false);
-    });
-    return () => subscription.unsubscribe();
-  }, [supabase]);
+  // Signing up or in also writes the user's profile. Firebase reports a new user as soon as
+  // the account exists, so the user is only handed to the app once the action that caused it
+  // has finished: no page ever sees a signed-in user whose profile is still being created.
+  const pending = useRef<Promise<unknown>>(Promise.resolve());
+  const track = useCallback(<T,>(action: Promise<T>) => {
+    pending.current = action.catch(() => undefined);
+    return action;
+  }, []);
 
-  const fetchProfile = useCallback(
-    async (uid: string) => {
-      const { data } = await supabase.from("profiles").select("*").eq("id", uid).single();
-      return (data as Profile) ?? null;
-    },
-    [supabase]
-  );
+  useEffect(() => {
+    try {
+      return onUserChanged((next) => {
+        void pending.current.then(() => {
+          // Keep the old object for the same user, so pages don't refetch their data.
+          setUser((prev) => (prev?.id === next?.id ? prev : next));
+          setLoading(false);
+        });
+      });
+    } catch (error) {
+      // Firebase is not configured (see .env.local.example): leave the public pages usable.
+      console.error(error);
+      setLoading(false);
+    }
+  }, []);
 
   // Load the profile once per signed-in user.
   useEffect(() => {
@@ -59,27 +72,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     let alive = true;
-    fetchProfile(userId).then((p) => {
-      if (alive) setProfile(p);
-    });
+    (async () => {
+      let found = await getProfile(userId);
+      if (!found) {
+        // Signed in without a profile, e.g. a sign-up that died halfway: create it now.
+        await ensureCurrentProfile();
+        found = await getProfile(userId);
+      }
+      if (alive) setProfile(found);
+    })().catch((error) => console.error("Could not load the profile", error));
     return () => {
       alive = false;
     };
-  }, [userId, fetchProfile]);
+  }, [userId]);
 
   /** Reload the profile after changing it (display name, minister status). */
   const refreshProfile = useCallback(async () => {
-    if (userId) setProfile(await fetchProfile(userId));
-  }, [userId, fetchProfile]);
+    if (userId) setProfile(await getProfile(userId));
+  }, [userId]);
+
+  const signUp = useCallback(
+    (displayName: string, email: string, password: string) =>
+      track(signUpWithEmail(displayName, email, password)),
+    [track]
+  );
+  const signIn = useCallback((email: string, password: string) => track(signInWithEmail(email, password)), [track]);
+  const signInWithGoogle = useCallback(() => track(googleSignIn()), [track]);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    await signOutUser();
     setUser(null);
     setProfile(null);
-  }, [supabase]);
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, refreshProfile, signOut }}>
+    <AuthContext.Provider
+      value={{ user, profile, loading, refreshProfile, signUp, signIn, signInWithGoogle, signOut }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -92,10 +121,8 @@ export function useAuth(): AuthValue {
 }
 
 /**
- * Navigate with a full page load after the session changes (log in, sign up, log out).
- * Next.js prefetches links into its client router cache, so a client-side navigation
- * would replay pages fetched under the old session, e.g. the middleware's redirect to
- * /login for pages prefetched while logged out.
+ * Navigate with a full page load after the session changes (log in, sign up, log out), so the
+ * next page starts from a clean slate instead of inheriting the previous user's data.
  */
 export function reloadTo(path: string) {
   window.location.assign(path);

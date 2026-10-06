@@ -1,0 +1,281 @@
+rules_version = '2';
+
+// Security rules for Typing Bible. They are the access control for every read and
+// write the web app makes (the Firebase web config is public), and replace the
+// Postgres row level security the app used before. README.md documents the model.
+//
+//   profiles/{uid}                          public read; owner edits name + progress counters
+//   profiles/{uid}/reading_progress/{b_c}   typed verses of one chapter; owner only
+//   studies/{id}                            public studies, or the host's / members' own
+//   minister_applications/{id}              applicant + admins
+//   community_posts/{id}                    signed-in read; authors write their own
+//
+// Everything not matched below is denied.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- helpers ---------------------------------------------------------------
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function profileOf(uid) {
+      return get(/databases/$(database)/documents/profiles/$(uid)).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && profileOf(request.auth.uid).role == 'admin';
+    }
+
+    // A verified minister: may host studies.
+    function isMinister() {
+      return signedIn() && profileOf(request.auth.uid).is_minister == true;
+    }
+
+    // May post notices.
+    function isMinisterOrAdmin() {
+      return isMinister() || isAdmin();
+    }
+
+    function text(value, min, max) {
+      return value is string && value.size() >= min && value.size() <= max;
+    }
+
+    function counter(value, max) {
+      return value is int && value >= 0 && value <= max;
+    }
+
+    // Fields whose value differs between the stored document and the write.
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // ---- profiles --------------------------------------------------------------
+    // Readable by everyone: the leaderboard lists them and is public. Nothing
+    // private (no email) is stored here. `role` and `is_minister` can only be
+    // changed by an admin; the first admin is set in the Firebase console.
+
+    function profileKeys() {
+      return ['display_name', 'locale', 'role', 'is_minister', 'verses_typed', 'chapters_completed', 'created_at'];
+    }
+
+    // verses_typed / chapters_completed are the leaderboard totals, kept by the
+    // client in the same transaction that saves a chapter. They can only grow, and
+    // never past what the Bible contains (31102 verses, 1189 chapters).
+    function ownerProfileUpdate() {
+      let d = request.resource.data;
+      return changedKeys().hasOnly(['display_name', 'locale', 'verses_typed', 'chapters_completed'])
+        && text(d.display_name, 1, 60)
+        && d.locale in ['en', 'ko']
+        && counter(d.verses_typed, 31102)
+        && d.verses_typed >= resource.data.verses_typed
+        && counter(d.chapters_completed, 1189)
+        && d.chapters_completed >= resource.data.chapters_completed;
+    }
+
+    function adminProfileUpdate() {
+      let d = request.resource.data;
+      return changedKeys().hasOnly(['role', 'is_minister'])
+        && d.role in ['member', 'minister', 'admin']
+        && d.is_minister is bool;
+    }
+
+    match /profiles/{uid} {
+      allow read: if true;
+
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(profileKeys())
+        && request.resource.data.keys().hasAll(profileKeys())
+        && text(request.resource.data.display_name, 1, 60)
+        && request.resource.data.locale in ['en', 'ko']
+        && request.resource.data.role == 'member'
+        && request.resource.data.is_minister == false
+        && request.resource.data.verses_typed == 0
+        && request.resource.data.chapters_completed == 0
+        && request.resource.data.created_at == request.time;
+
+      allow update: if (isSelf(uid) && ownerProfileUpdate())
+        || (isAdmin() && adminProfileUpdate());
+
+      // ---- reading progress ----------------------------------------------------
+      // One document per chapter, id "<bookId>_<chapter>". typed_verses holds verse
+      // numbers; progress is shared by every translation and language.
+
+      function progressKeys() {
+        return ['book_id', 'chapter', 'typed_verses', 'verses_typed', 'completed', 'updated_at'];
+      }
+
+      function validProgress(chapterId) {
+        let d = request.resource.data;
+        return d.keys().hasOnly(progressKeys())
+          && d.keys().hasAll(progressKeys())
+          && d.book_id is int && d.book_id >= 1 && d.book_id <= 66
+          && d.chapter is int && d.chapter >= 1 && d.chapter <= 150
+          && chapterId == string(d.book_id) + '_' + string(d.chapter)
+          && d.typed_verses is list
+          && d.typed_verses.size() <= 176
+          && d.typed_verses.toSet().size() == d.typed_verses.size()
+          && d.verses_typed == d.typed_verses.size()
+          && d.completed is bool
+          && d.updated_at == request.time;
+      }
+
+      match /reading_progress/{chapterId} {
+        allow read, delete: if isSelf(uid);
+        allow create, update: if isSelf(uid) && validProgress(chapterId);
+      }
+    }
+
+    // ---- minister applications -------------------------------------------------
+    // Anyone signed in can apply for themselves. Reviewing is admin-only; until an
+    // admin UI exists it is done in the Firebase console (see README.md).
+
+    function applicationKeys() {
+      return ['user_id', 'church_name', 'denomination', 'role_title', 'credential_url', 'note',
+              'status', 'reviewed_by', 'reviewed_at', 'created_at'];
+    }
+
+    function validApplication() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(applicationKeys())
+        && d.keys().hasAll(applicationKeys())
+        && d.user_id == request.auth.uid
+        && text(d.church_name, 1, 120)
+        && text(d.denomination, 0, 80)
+        && text(d.role_title, 0, 80)
+        && text(d.credential_url, 0, 300)
+        && text(d.note, 0, 2000)
+        && d.status == 'pending'
+        && d.reviewed_by == null
+        && d.reviewed_at == null
+        && d.created_at == request.time;
+    }
+
+    function validReview() {
+      let d = request.resource.data;
+      return changedKeys().hasOnly(['status', 'reviewed_by', 'reviewed_at'])
+        && d.status in ['pending', 'approved', 'rejected']
+        && d.reviewed_by == request.auth.uid
+        && d.reviewed_at == request.time;
+    }
+
+    match /minister_applications/{applicationId} {
+      allow read: if signedIn() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow create: if signedIn() && validApplication();
+      allow update: if isAdmin() && validReview();
+    }
+
+    // ---- studies ---------------------------------------------------------------
+    // member_ids holds every member including the host. Only a verified minister can
+    // create a study (as its host). Anyone signed in can join a public study or leave
+    // one, by adding or removing only their own id.
+
+    function studyKeys() {
+      return ['host_id', 'title', 'description', 'translation', 'schedule', 'is_public',
+              'join_code', 'member_ids', 'created_at'];
+    }
+
+    function validNewStudy() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(studyKeys())
+        && d.keys().hasAll(studyKeys())
+        && d.host_id == request.auth.uid
+        && text(d.title, 1, 120)
+        && text(d.description, 0, 2000)
+        && text(d.translation, 1, 20)
+        && text(d.schedule, 0, 120)
+        && d.is_public is bool
+        && text(d.join_code, 8, 8)
+        && d.member_ids == [request.auth.uid]
+        && d.created_at == request.time;
+    }
+
+    // member_ids never lists a uid twice: the UI shows its length as the member count.
+    function uniqueMembers() {
+      return request.resource.data.member_ids.size() == request.resource.data.member_ids.toSet().size();
+    }
+
+    // The host edits the study and may remove members, but not add them.
+    function hostStudyUpdate() {
+      let d = request.resource.data;
+      return resource.data.host_id == request.auth.uid
+        && changedKeys().hasOnly(['title', 'description', 'translation', 'schedule', 'is_public', 'member_ids'])
+        && text(d.title, 1, 120)
+        && text(d.description, 0, 2000)
+        && text(d.translation, 1, 20)
+        && text(d.schedule, 0, 120)
+        && d.is_public is bool
+        && request.auth.uid in d.member_ids
+        && d.member_ids.hasOnly(resource.data.member_ids)
+        && uniqueMembers();
+    }
+
+    function joinStudy() {
+      return resource.data.is_public == true
+        && changedKeys().hasOnly(['member_ids'])
+        && request.resource.data.member_ids.toSet()
+             == resource.data.member_ids.toSet().union([request.auth.uid].toSet())
+        && uniqueMembers();
+    }
+
+    function leaveStudy() {
+      return resource.data.host_id != request.auth.uid
+        && request.auth.uid in resource.data.member_ids
+        && changedKeys().hasOnly(['member_ids'])
+        && request.resource.data.member_ids.toSet()
+             == resource.data.member_ids.toSet().difference([request.auth.uid].toSet())
+        && uniqueMembers();
+    }
+
+    match /studies/{studyId} {
+      allow read: if signedIn() && (
+        resource.data.is_public == true
+        || resource.data.host_id == request.auth.uid
+        || request.auth.uid in resource.data.member_ids
+      );
+      allow create: if isMinister() && validNewStudy();
+      allow update: if signedIn() && (hostStudyUpdate() || joinStudy() || leaveStudy());
+      allow delete: if signedIn() && resource.data.host_id == request.auth.uid;
+    }
+
+    // ---- community board -------------------------------------------------------
+    // Only ministers and admins may post (or turn a post into) a notice.
+
+    function postCategories() {
+      return ['notice', 'qna', 'testimony', 'general'];
+    }
+
+    function validNewPost() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['author_id', 'category', 'title', 'body', 'created_at'])
+        && d.keys().hasAll(['author_id', 'category', 'title', 'body', 'created_at'])
+        && d.author_id == request.auth.uid
+        && d.category in postCategories()
+        && (d.category != 'notice' || isMinisterOrAdmin())
+        && text(d.title, 1, 200)
+        && text(d.body, 0, 10000)
+        && d.created_at == request.time;
+    }
+
+    function validPostEdit() {
+      let d = request.resource.data;
+      return changedKeys().hasOnly(['category', 'title', 'body'])
+        && d.category in postCategories()
+        && (d.category != 'notice' || resource.data.category == 'notice' || isMinisterOrAdmin())
+        && text(d.title, 1, 200)
+        && text(d.body, 0, 10000);
+    }
+
+    match /community_posts/{postId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validNewPost();
+      allow update: if signedIn() && resource.data.author_id == request.auth.uid && validPostEdit();
+      allow delete: if signedIn() && resource.data.author_id == request.auth.uid;
+    }
+  }
+}

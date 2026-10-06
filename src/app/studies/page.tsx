@@ -12,7 +12,7 @@ import {
   LuUser,
   LuUsers,
 } from "react-icons/lu";
-import { createClient } from "@/lib/supabase/client";
+import { createStudy, getProfiles, joinStudy, listStudies } from "@/lib/firebase/db";
 import { useAuth } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { errorMessage } from "@/lib/errors";
@@ -43,38 +43,31 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 
 interface StudyView extends Study {
-  memberIds: string[];
   hostName: string;
 }
 
 export default function StudiesPage() {
   const { t } = useI18n();
   const { user, profile } = useAuth();
-  const supabase = createClient();
 
   const [studies, setStudies] = useState<StudyView[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!user) return;
     setLoading(true);
-    // One request: each study with its host's name and its members embedded. `!host_id`
-    // picks the direct link to profiles; study_members also connects the two tables.
-    const { data } = await supabase
-      .from("studies")
-      .select("*, host:profiles!host_id(display_name), study_members(user_id)")
-      .order("created_at", { ascending: false });
-    const rows =
-      (data as (Study & { host: { display_name: string } | null; study_members: { user_id: string }[] })[]) ?? [];
-
-    const views: StudyView[] = rows.map(({ host, study_members, ...s }) => ({
-      ...s,
-      memberIds: study_members.map((m) => m.user_id),
-      hostName: host?.display_name ?? "-",
-    }));
-    setStudies(views);
+    try {
+      const rows = await listStudies(user.id);
+      // Hosts are looked up by id, so a renamed host shows under the new name.
+      const hosts = await getProfiles(rows.map((s) => s.host_id));
+      setStudies(rows.map((s) => ({ ...s, hostName: hosts.get(s.host_id)?.display_name ?? "-" })));
+    } catch (e) {
+      console.error(e);
+    }
     setLoading(false);
-  }, [supabase]);
+  }, [user]);
 
   useEffect(() => {
     load();
@@ -82,11 +75,13 @@ export default function StudiesPage() {
 
   const join = async (studyId: string) => {
     if (!user) return;
-    await supabase.from("study_members").insert({
-      study_id: studyId,
-      user_id: user.id,
-      role: "member",
-    });
+    setError(null);
+    try {
+      await joinStudy(studyId, user.id);
+    } catch (e) {
+      setError(errorMessage(e, t));
+      return;
+    }
     load();
   };
 
@@ -116,6 +111,13 @@ export default function StudiesPage() {
         <Alert>
           <LuLock />
           <AlertDescription>{t("studies.ministerOnly")}</AlertDescription>
+        </Alert>
+      )}
+
+      {error && (
+        <Alert variant="destructive">
+          <LuCircleAlert />
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
@@ -168,7 +170,7 @@ export default function StudiesPage() {
                 </span>
                 <span className="flex items-center gap-1.5">
                   <LuUsers className="size-4" />
-                  {s.memberIds.length} {t(s.memberIds.length === 1 ? "studies.member" : "studies.members")}
+                  {s.member_ids.length} {t(s.member_ids.length === 1 ? "studies.member" : "studies.members")}
                 </span>
                 {s.schedule && (
                   <span className="flex items-center gap-1.5">
@@ -178,7 +180,7 @@ export default function StudiesPage() {
                 )}
               </CardContent>
               <CardFooter className="mt-auto justify-end">
-                {user && s.memberIds.includes(user.id) ? (
+                {user && s.member_ids.includes(user.id) ? (
                   <Badge variant="secondary">
                     <LuCheck />
                     {t("studies.joined")}
@@ -201,7 +203,6 @@ function CreateStudy({ onCreated, onCancel }: { onCreated: () => void; onCancel:
   const { t } = useI18n();
   const { user } = useAuth();
   const { translation: currentVersion } = useBibleVersion();
-  const supabase = createClient();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [schedule, setSchedule] = useState("");
@@ -215,19 +216,14 @@ function CreateStudy({ onCreated, onCancel }: { onCreated: () => void; onCancel:
     if (!user) return;
     setBusy(true);
     setError(null);
-    const { error, status } = await supabase.from("studies").insert({
-      host_id: user.id,
-      title,
-      description,
-      schedule,
-      translation,
-      is_public: isPublic,
-    });
-    setBusy(false);
-    if (error) {
-      setError(errorMessage(error, t, status));
+    try {
+      await createStudy(user.id, { title, description, schedule, translation, isPublic });
+    } catch (e) {
+      setBusy(false);
+      setError(errorMessage(e, t));
       return;
     }
+    setBusy(false);
     onCreated();
   };
 

@@ -25,6 +25,10 @@ yarn-error.log*
 # testing
 /coverage
 
+# firebase
+.firebase/
+*-debug.log
+
 # vercel
 .vercel
 

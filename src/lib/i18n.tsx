@@ -54,9 +54,38 @@ const DICT = {
     ko: "한 절씩 타이핑하며 성경 전체를 통독하세요.",
   },
   "auth.passwordHint": { en: "At least 6 characters.", ko: "6자 이상 입력하세요." },
-  "auth.checkEmail": {
-    en: "Check your email to confirm your account, then log in.",
-    ko: "이메일을 확인해 계정을 인증한 뒤 로그인하세요.",
+  "auth.or": { en: "or", ko: "또는" },
+  "auth.googleLogin": { en: "Log in with Google", ko: "Google로 로그인" },
+  "auth.googleSignup": { en: "Sign up with Google", ko: "Google로 회원가입" },
+  "auth.errInvalidCredential": {
+    en: "Incorrect email or password.",
+    ko: "이메일 또는 비밀번호가 올바르지 않습니다.",
+  },
+  "auth.errInvalidEmail": { en: "Enter a valid email address.", ko: "올바른 이메일 주소를 입력해 주세요." },
+  "auth.errEmailInUse": {
+    en: "An account with this email already exists. Try logging in.",
+    ko: "이미 가입된 이메일입니다. 로그인해 주세요.",
+  },
+  "auth.errWeakPassword": {
+    en: "Choose a password with at least 6 characters.",
+    ko: "비밀번호는 6자 이상이어야 합니다.",
+  },
+  "auth.errUserDisabled": { en: "This account has been disabled.", ko: "사용이 중지된 계정입니다." },
+  "auth.errTooManyRequests": {
+    en: "Too many attempts. Wait a moment and try again.",
+    ko: "시도 횟수가 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+  },
+  "auth.errPopupBlocked": {
+    en: "Your browser blocked the Google sign-in window. Allow pop-ups for this site and try again.",
+    ko: "브라우저가 Google 로그인 창을 차단했습니다. 이 사이트의 팝업을 허용한 후 다시 시도해 주세요.",
+  },
+  "auth.errAccountExists": {
+    en: "This email is already registered with a different sign-in method. Log in with that method instead.",
+    ko: "이미 다른 로그인 방법으로 가입된 이메일입니다. 해당 방법으로 로그인해 주세요.",
+  },
+  "auth.errUnavailable": {
+    en: "Signing in isn't available right now. Please try again later.",
+    ko: "지금은 로그인할 수 없습니다. 잠시 후 다시 시도해 주세요.",
   },
 
   "read.title": { en: "My Reading Progress", ko: "나의 성경통독 현황표" },
@@ -181,6 +210,11 @@ const DICT = {
     en: "Can't reach the server. Check your internet connection and try again.",
     ko: "서버에 연결할 수 없습니다. 인터넷 연결을 확인한 후 다시 시도해 주세요.",
   },
+  "common.permissionDenied": {
+    en: "You don't have permission to do that.",
+    ko: "이 작업을 수행할 권한이 없습니다.",
+  },
+  "common.error": { en: "Something went wrong. Please try again.", ko: "문제가 발생했습니다. 다시 시도해 주세요." },
 } as const;
 
 export type DictKey = keyof typeof DICT;
