@@ -28,4 +28,4 @@ Never commit API keys, service-account files, tokens, passwords or PINs. The Fir
 
 ## Stack
 
-Firebase is the only backend: Authentication (email/password and Google), Firestore and Analytics, in the `bibleprep-hyber` project. Setup, emulators, security rules and the admin runbook are in [README.md](README.md).
+Firebase is the only backend and the host: Authentication (email/password and Google), Firestore, Analytics and Hosting, in the `bibleprep-hyber` project. The site is a static export published with `npm run deploy` at bibleprep.com. Setup, emulators, security rules, deploying and the admin runbook are in [README.md](README.md).

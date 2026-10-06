@@ -1,18 +1,14 @@
-"use client";
+import TypingRoute from "@/components/TypingRoute";
+import { BOOKS } from "@/lib/bible/books";
 
-import { useParams } from "next/navigation";
-import TypingPane from "@/components/TypingPane";
-import { useBibleVersion } from "@/lib/bible/version";
-
-export default function TypingPage() {
-  const params = useParams();
-  const { translation } = useBibleVersion();
-
-  return (
-    <TypingPane
-      bookId={Number(params.bookId)}
-      chapter={Number(params.chapter)}
-      translation={translation.id}
-    />
+// The published site is static files, so every chapter of every book is built ahead of time.
+export function generateStaticParams() {
+  return BOOKS.flatMap((book) =>
+    Array.from({ length: book.chapters }, (_, i) => ({ bookId: String(book.id), chapter: String(i + 1) }))
   );
+}
+
+export default async function TypingPage({ params }: { params: Promise<{ bookId: string; chapter: string }> }) {
+  const { bookId, chapter } = await params;
+  return <TypingRoute bookId={Number(bookId)} chapter={Number(chapter)} />;
 }

@@ -5,8 +5,8 @@ with per-user progress tracking, an EN/KR language switch, minister-gated **bibl
 a typing **leaderboard**, and a **community board**.
 
 Built with **Next.js 15 (App Router) + TypeScript + Tailwind CSS v4 + [shadcn/ui](https://ui.shadcn.com) + Firebase**
-(Authentication with email/password and Google, Firestore, Analytics) in the `bibleprep-hyber` project.
-Firebase is the only backend. Rules for contributors are in [CLAUDE.md](CLAUDE.md).
+(Authentication with email/password and Google, Firestore, Analytics, Hosting) in the `bibleprep-hyber` project.
+Firebase is the only backend and the host. Rules for contributors are in [CLAUDE.md](CLAUDE.md).
 
 ---
 
@@ -61,6 +61,13 @@ npm run dev      # http://localhost:3000 (Turbopack; pages compile on first visi
 ```
 With the real config this talks to the live `bibleprep-hyber` project, so accounts and data you create
 are real. To work against a throwaway local copy instead, use the emulators.
+
+To see the site the way Firebase Hosting serves it (a production build is static files in `out/`):
+```bash
+npm run build
+npm run serve    # http://127.0.0.1:5050
+```
+The build bakes in the Firebase config it was made with, real or emulators, so rebuild after changing it.
 
 ### Local emulators
 Needs the Firebase CLI and a JDK 21 or newer (for the Firestore emulator).
@@ -157,6 +164,11 @@ To decline, set the application's `status` to `rejected`; the applicant can appl
 - **Versions**: `src/lib/bible/version.tsx` remembers the chosen version per language (in `localStorage`).
 - **Minister gating**: enforced by the Firestore rules (creating a study requires `is_minister`), not just the UI.
 - **Errors**: `src/lib/errors.ts` turns Firebase error codes into translated, user-facing text.
+- **Hosting**: a production build is a static export (`output: "export"` in `next.config.js`, files in
+  `out/`) served by Firebase Hosting; there is no server. Pages with dynamic URLs are built ahead of time:
+  every book and chapter through `generateStaticParams`, and, because study ids only exist at run time, one
+  placeholder page for `/studies/<id>` that the rewrite in `firebase.json` serves for every id. `StudyDetail`
+  reads the id from the address bar. `next dev` is not an export, so these routes behave normally there.
 
 ### Firestore data model
 
@@ -176,7 +188,8 @@ them at what the Bible contains.
 ```
 src/
   app/            route pages (read grid, typing, studies, minister, leaderboard, community, auth)
-  components/     Nav, AuthGate, GoogleButton, LangSwitch, VersionSelect, TypingPane, PageHeader, AuthCard, Providers
+  components/     Nav, AuthGate, GoogleButton, LangSwitch, VersionSelect, TypingPane, ChapterPicker, StudyDetail,
+                  TypingRoute, PageHeader, AuthCard, Providers
     ui/           shadcn/ui components (npm run ui:add)
   lib/
     firebase/     client (SDK setup), auth (sign up / in / Google), db (all Firestore access)
@@ -187,15 +200,28 @@ src/
     errors.ts     Firebase error -> user-facing message
 firestore.rules         security rules (the access control)
 firestore.indexes.json  Firestore indexes
-firebase.json           deploy + emulator config; .firebaserc selects the project
+firebase.json           Hosting, Firestore and emulator config; .firebaserc selects the project
 tests/                  Firestore rules tests (npm run test:rules)
 scripts/import-bible.mjs   public-domain Bible importer
+scripts/check-deploy-env.mjs   safety check that runs before every deploy
 public/bible/   chapter text JSON, every version
 ```
 
 ## Deploy
-1. Deploy the rules and indexes: `firebase deploy --only firestore`.
-2. Host the Next.js app wherever you like (e.g. Vercel: import the GitHub repo and add the
-   `NEXT_PUBLIC_FIREBASE_*` variables from `.env.local.example` in the project settings).
-3. Add the production domain under **Authentication → Settings → Authorized domains**, or Google sign-in
-   will be refused there.
+The site is published to Firebase Hosting (site `bibleprep-hyber`): https://bibleprep.com and
+https://bibleprep-hyber.web.app.
+
+1. When the rules or indexes change: `firebase deploy --only firestore`.
+2. Publish the site: `firebase login` once, then `npm run deploy`. It checks that `.env.local` has the web
+   config for this project and does not point at the emulators (`scripts/check-deploy-env.mjs`), builds the
+   static site, and uploads `out/`. Preview first with `npm run build && npm run serve`.
+3. Add each domain the site is served on under **Authentication → Settings → Authorized domains**, or
+   Google sign-in will be refused there.
+
+### Custom domain
+`bibleprep.com` was bought at Namecheap and is connected in the Firebase console (**Hosting → Add custom
+domain**); `www.bibleprep.com` is added there as a redirect to it. The DNS is Namecheap's (**Domain List →
+Manage → Advanced DNS**): A records for `@` and `www` pointing at Firebase Hosting (`199.36.158.100`) and
+the `hosting-site=bibleprep-hyber` TXT record Firebase asks for. Leave the email forwarding records (the MX
+records and the SPF TXT under Mail Settings) alone, and do not add a URL Redirect or a parking CNAME for
+`@` or `www`; they would take the domain away from Hosting. Firebase issues and renews the certificates.
