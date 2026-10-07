@@ -4,8 +4,8 @@ Rules for everyone who works in this repository, people and AI sessions alike. T
 
 ## Git workflow
 
-- `master`, this repo's main branch, is reached through a pull request: CI green, and the code owner's approval where a shared file changed.
-- A session works on a branch, opens the pull request, and says so. It never pushes to `master` and never merges unless the owner asked for exactly that.
+- `main` is reached through a pull request: CI green, and the code owner's approval where a shared file changed.
+- A session works on a branch, opens the pull request, and says so. It never pushes to `main` and never merges unless the owner asked for exactly that.
 
 ## Commits
 
